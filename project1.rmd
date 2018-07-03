@@ -1,0 +1,350 @@
+---
+title: "Predicting Default Payments of Credit Card Clients"
+author: "Sarbajeet Biswal"
+date: "11 May 2018"
+output: html_document
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(arules)
+```
+
+
+```{r}
+df <- read.csv("file:///H:/Manipal_Backup/D_drive/PROJECT/PROJECT/default_of_credit_card_clients.csv")
+
+
+df1 = df
+names(df1)
+
+```
+
+
+Clean up
+I lowercase the column name, and rename the column names when required, In particular, remarkably this dataset misses a column  PAY_1. In the analysis here below we assume that PAY_0 is actually pay_1, to be consider the repayment of the month prior to the month where we calculate the defaulting (which is October 2005, in this particular dataset) and removing the duplicate rows.
+
+```{r}
+df1 = df
+
+names(df1) = tolower(names(df1))
+
+names(df1)[7] = "pay_1"
+
+# Remove "id" column
+#names(df1)
+
+df1 <- df1[c(2:25)]
+
+names(df1)
+
+colSums(is.na(df1))
+
+df1 = df1[!duplicated(df1),]
+
+```
+
+
+```{r}
+cat("Explanatory variables: ", ncol(df1)-1, "\n\n")
+
+cat("Number of Observations: ", nrow(df1), "\n\n")
+
+df1$default.payment.next.month <- as.factor(df1$default.payment.next.month)
+
+names(df1)[24] <- "target"
+
+# create a "target" column for our own convenience
+cat("Target variable:  'default.payment.next.month' -> 'target' \n\n")
+```
+
+
+# Descriptive Analytics
+=======================
+
+Payment Delays: 
+
+Let's start by looking at the past payment delays
+
+```{r}
+#names(df1)
+
+head(df1[c(6:11)],10)
+
+```
+
+
+```{r}
+# pay status columns
+
+library(ggplot2)
+par(mfrow=c(3,2))
+for(i in 6:11)
+{
+  
+ hist(df1[,i],main = paste("Histogram of ",names(df1)[i]),labels = FALSE,xlab = names(df1)[i],col = "green",border = "blue")
+  
+}
+
+
+```
+
+# Standing credit
+------------------
+Let's look now at how the debts/credit is accumulating over the months, credit to be repaid is a positive number here.
+
+```{r}
+
+summary(df1[,c(12:17)])
+
+```
+
+```{r}
+head(df1[,c(12:17)],10)
+
+```
+
+# Payments in the previous months
+-----------------------------------
+Let's have a quick look at how the payments are performed in the previous month.
+
+```{r}
+# pay status columns
+
+summary(df1[,c(18:23)])
+
+```
+
+
+```{r}
+head(df1[,c(18:23)],10)
+
+```
+
+
+```{r}
+summary(df1$limit_bal)
+
+cat("\n Standard deviation:",sd(df1$limit_bal),"\n\n")
+
+```
+
+
+
+
+
+```{r}
+# limit balance
+
+counts <- table(df1$limit_bal)
+barplot(counts,log = "y",ylab = "freq",xlab = "Limit Balance")
+
+```
+
+
+# Explore Defaulting
+----------------------
+First off, let's start with a zoomed out view on the problem.
+We want to predict defaulting, Let's answer the following questions:
+
+how many cases do we have on our dataset to work with?
+What is the breakdown depending on some of the variables available?
+
+```{r}
+d = df1
+
+d = table(d$target)
+
+barplot(d,horiz = TRUE,ylab = "target",legend.text = c("Not Default","Default"),col = c("green","red"))
+
+
+```
+
+
+# Explore some statistics of defaulting using the categorical variables
+-------------------------------------------------------------------------
+Let's have a look at a number of histograms to see how defaulting correlated with the categorical variables available, by converting target, sex, marriage, age to categories
+
+# Absolute statistics
+----------------------
+
+```{r}
+e = df1
+
+e$target = factor(e$target,levels=c(0,1),labels = c("Not Default","Default"))
+
+e$sex = factor(e$sex,levels=c(1,2),labels = c("Male","Female"))
+
+e$marriage = factor(df1$marriage,levels = c(0,1,2,3),labels = c("na","married","single","other"))
+
+e1 = e %>% group_by(target,sex) %>% summarise(freq = n())
+
+e2 = e %>% group_by(target,marriage) %>% summarise(freq = n())
+
+e$age_cat = cut(e$age,breaks = seq(0,100,10),include.lowest = TRUE)
+
+e3 = e %>% group_by(target,age_cat) %>% summarise(freq = n())
+
+plot1 = ggplot(e1,aes(x=target,y=freq,fill=sex)) + geom_bar(stat = 'identity',position = 'dodge')
+plot2 = ggplot(e2,aes(x=target,y=freq,fill=marriage)) + geom_bar(stat = 'identity',position = 'dodge')
+plot3 = ggplot(e3,aes(x=target,y=freq,fill=age_cat)) + geom_bar(stat = 'identity',position = 'dodge')
+
+grid.arrange(plot1, plot2,plot3,ncol=2)
+
+```
+
+
+# Statistics relative to the population
+----------------------------------------
+
+```{r}
+e = df1
+
+e$target = factor(e$target,levels=c(0,1),labels = c("Not Default","Default"))
+
+e$sex = factor(e$sex,levels=c(1,2),labels = c("Male","Female"))
+
+e$marriage = factor(df1$marriage,levels = c(0,1,2,3),labels = c("na","married","single","other"))
+
+e1 = e %>% group_by(target,sex) %>% summarise(freq = n())
+e11 = e %>% group_by(sex) %>% summarise(freq1 = n())
+e1$rel_freq = e1$freq/e11$freq1
+
+e2 = e %>% group_by(target,marriage) %>% summarise(freq = n())
+e11 = e %>% group_by(marriage) %>% summarise(freq1 = n())
+e2$rel_freq = e2$freq/e11$freq1
+
+e$age_cat = cut(e$age,breaks = seq(0,100,10),include.lowest = TRUE)
+
+e3 = e %>% group_by(target,age_cat) %>% summarise(freq = n())
+e11 = e %>% group_by(age_cat) %>% summarise(freq1 = n())
+e3$rel_freq = e3$freq/e11$freq1
+
+plot1 = ggplot(e1,aes(x=target,y=rel_freq,fill=sex)) + geom_bar(stat = 'identity',position = 'dodge')
+plot2 = ggplot(e2,aes(x=target,y=rel_freq,fill=marriage)) + geom_bar(stat = 'identity',position = 'dodge')
+plot3 = ggplot(e3,aes(x=target,y=rel_freq,fill=age_cat)) + geom_bar(stat = 'identity',position = 'dodge')
+
+grid.arrange(plot1, plot2,plot3,ncol=2)
+
+```
+
+# Feature engineering
+-----------------------
+
+# Splitting the dataset into the Training set and Test set
+```{r}
+d = df1
+
+library(caTools)
+
+set.seed(123)
+split = sample.split(d, SplitRatio = 0.7)
+
+train = subset(d, split==T)
+test = subset(d, split==F)
+
+train[,c(1,5,12:23)] = scale(train[,c(1,5,12:23)])
+test[,c(1,5,12:23)] = scale(test[,c(1,5,12:23)])
+
+```
+
+
+# Models
+---------
+
+# Support Vector Machine (SVM)
+```{r}
+
+library(e1071)
+
+model1 = svm(formula = target ~ ., data = train, type = 'C-classification', kernel = 'linear')
+
+prob_pred = predict(model1,newdata = test[,-24])
+
+ cm = table(prob_pred,test[,24])
+
+# cm = table(prob_pred,test[,10])
+
+accuracy=sum(diag(cm))/sum(cm)
+
+cat("SVM model's accuracy: ",accuracy)
+```
+
+
+# Logistic Regression
+```{r}
+
+ model2 = glm(formula = target ~ ., data = train, family = binomial)
+
+#model2 = glm(formula = target ~ limit_bal+education+marriage+age+pay_1+pay_2+pay_3+bill_amt1+pay_amt1+pay_amt2, data = train, family = binomial)
+
+prob_pred = predict(model2,newdata = test[,-24],type = 'response')
+
+y_pred = ifelse(prob_pred > 0.5,1,0)
+ 
+ cm = table(y_pred,test[,24])
+
+# cm = table(prob_pred,test[,10])
+
+accuracy=sum(diag(cm))/sum(cm)
+
+cat("Logistic Regression model's accuracy: ",accuracy)
+```
+
+
+```{r}
+#str(d)
+```
+
+# Naive Bayes
+```{r}
+library(e1071)
+
+model3 = naiveBayes(formula = target ~ ., data = train)
+
+prob_pred = predict(model3,newdata = test[,-24])
+
+ cm = table(prob_pred,test[,24])
+
+# cm = table(prob_pred,test[,10])
+
+accuracy=sum(diag(cm))/sum(cm)
+
+cat("Naive Bayes model's accuracy: ",accuracy)
+
+```
+
+# Decision Tree
+```{r}
+library(rpart)
+
+model4 = rpart(formula = target ~ ., data = train)
+
+prob_pred = predict(model4,newdata = test[,-24],type = 'class')
+
+ cm = table(prob_pred,test[,24])
+
+# cm = table(prob_pred,test[,10])
+
+accuracy=sum(diag(cm))/sum(cm)
+
+cat("Decission Tree Classification model's accuracy: ",accuracy)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
